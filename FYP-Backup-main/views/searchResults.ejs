@@ -106,10 +106,13 @@
     .dashboard-box {
       background-color: #d9d9d9;
       border-radius: 20px;
-      min-height: 100px;
+      min-height: 280px;
       margin: 20px auto;
       width: 80%;
       padding: 15px 25px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
     }
 
     .dashboard-box h5 {
@@ -120,21 +123,13 @@
       color: #555;
     }
 
-    .back-btn {
+    .dashboard-content {
+      position: relative;
+      background: transparent;
+      height: 100%;
       display: flex;
-      justify-content: center;
-      margin-top: 30px;
-    }
-
-    .info-box {
-      background-color: #d9d9d9;
-      padding: 15px 20px;
-      border-radius: 10px;
-      margin: 20px auto;
-      width: 80%;
-      text-align: center;
-      color: #333;
-      font-weight: bold;
+      flex-direction: column;
+      justify-content: space-between;
     }
   </style>
 </head>
@@ -177,35 +172,60 @@
 
     <!-- Results -->
     <% if (results.length > 0) { %>
-      <% results.forEach(project => { %>
+      <% for (let i = 0; i < results.length; i++) { %>
         <div class="dashboard-box">
-          <div class="d-flex justify-content-between align-items-center">
-            <h5><%= project.project_title %></h5>
-            <div>
-              <a href="/ISLP/<%= project.projectid %>" class="btn btn-sm btn-outline-dark me-2">View</a>
-              <% if (currentUser.roleid === 1 || parseInt(project.project_head) === currentUser.accountid) { %>
-                <a href="/editISLP/<%= project.projectid %>" class="btn btn-sm btn-outline-dark me-2">Edit</a>
-                <a href="/deleteISLP/<%= project.projectid %>" class="btn btn-sm btn-outline-danger"
-                   onclick="return confirm('Are you sure you want to delete this project?');">Delete</a>
-              <% } %>
+          <!-- Content -->
+          <div class="dashboard-content">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <h5><%= results[i].project_title %></h5>
+                
+                <!-- Project Image positioned after title -->
+                <% if (results[i].project_images) { %>
+                  <div class="my-3">
+                    <img src="/images/<%= results[i].project_images %>" 
+                         alt="<%= results[i].project_title %>" 
+                         style="max-width: 200px; max-height: 100px; object-fit: contain; border-radius: 10px;">
+                  </div>
+                <% } %>
+                
+                <small>
+                  Description: <%= results[i].description %> <br>
+                  Start Date: <%= new Date(results[i].project_start).toLocaleDateString('en-GB') %> |
+                  End Date: <%= new Date(results[i].project_end).toLocaleDateString('en-GB') %> |
+                  Status: <%= results[i].dynamic_status || results[i].project_status %>
+                  <% if (parseInt(results[i].project_head) === (currentUser ? currentUser.accountid : -1)) { %>
+                    <br><strong>Your project</strong>
+                  <% } else if (results[i].is_member) { %>
+                    <br><strong>Member of project</strong>
+                  <% } %>
+                </small>
+              </div>
+              
+              <div>
+                <a href="/ISLP/<%= results[i].projectid %>" class="btn btn-sm btn-outline-dark me-2">View</a>
+                <% if (currentUser) { %>
+                  <% if (currentUser.roleid === 1 || currentUser.roleid === 2) { %>
+                    <a href="/editISLP/<%= results[i].projectid %>" class="btn btn-sm btn-outline-dark me-2">Edit</a>
+                    <a href="/deleteISLP/<%= results[i].projectid %>" class="btn btn-sm btn-outline-danger" onclick="return confirm('Are you sure you want to delete this project?');">Delete</a>
+                  <% } else if (currentUser.roleid === 3) { %>
+                    <% if (results[i].is_member) { %>
+                      <span class="badge bg-success">Joined</span>
+                    <% } else { %>
+                      <a href="/signup/<%= results[i].projectid %>" class="btn btn-sm btn-outline-primary">Join</a>
+                    <% } %>
+                  <% } %>
+                <% } %>
+              </div>
             </div>
           </div>
-          <small>
-            Description: <%= project.description %> <br>
-            Start Date: <%= new Date(project.project_start).toLocaleDateString('en-GB') %> |
-            End Date: <%= new Date(project.project_end).toLocaleDateString('en-GB') %> |
-            Status: <%= project.project_status %>
-            <% if (parseInt(project.project_head) === currentUser.accountid) { %>
-              <br><strong>Your project</strong>
-            <% } %>
-            <% if (currentUser.roleid === 3 && project.is_member == 1) { %>
-              <br><strong>Member of project</strong>
-            <% } %>
-          </small>
         </div>
-      <% }) %>
+      <% } %>
     <% } else { %>
-      <div class="info-box">No results found for "<%= query %>". Please try a different search term.</div>
+      <div class="no-results">
+        <h4>No projects found</h4>
+        <p>No projects match your search criteria.</p>
+      </div>
     <% } %>
 
     <!-- Back to Home -->

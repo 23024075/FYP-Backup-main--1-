@@ -80,10 +80,13 @@
     .dashboard-box {
       background-color: #d9d9d9;
       border-radius: 20px;
-      min-height: 100px;
+      min-height: 280px;
       margin: 20px auto;
       width: 80%;
       padding: 15px 25px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
     }
 
     .dashboard-box h5 {
@@ -92,6 +95,45 @@
 
     .dashboard-box small {
       color: #555;
+    }
+
+    .dashboard-content {
+      position: relative;
+      background: transparent;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .project-image-container {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: auto;
+      max-width: 60%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .project-image-fade {
+      height: 100%;
+      width: auto;
+      max-width: none;
+      object-fit: cover;
+      object-position: right center;
+      opacity: 0.25;
+      border-radius: 0 20px 20px 0;
+      transition: opacity 0.3s ease;
+      float: right;
+      mask: linear-gradient(to left, rgba(0,0,0,1) 70%, rgba(0,0,0,0) 100%);
+      -webkit-mask: linear-gradient(to left, rgba(0,0,0,1) 70%, rgba(0,0,0,0) 100%);
+    }
+
+    .dashboard-box:hover .project-image-fade {
+      opacity: 0.35;
     }
 
     .back-btn {
@@ -156,24 +198,40 @@
     <% if (projects.length > 0) { %>
       <% for (let i = 0; i < projects.length; i++) { %>
         <div class="dashboard-box">
-          <div class="d-flex justify-content-between align-items-center">
-            <h5><%= projects[i].project_title %></h5>
-            <div>
-              <a href="/ISLP/<%= projects[i].projectid %>" class="btn btn-sm btn-outline-dark me-2">View</a>
-              <% if (currentUser && currentUser.roleid !== 3) { %>
-                <a href="/editISLP/<%= projects[i].projectid %>" class="btn btn-sm btn-outline-dark me-2">Edit</a>
-                <a href="/deleteISLP/<%= projects[i].projectid %>" class="btn btn-sm btn-outline-danger"
-                   onclick="return confirm('Are you sure you want to delete this project?');">Delete</a>
-              <% } %>
+          <!-- Content -->
+          <div class="dashboard-content">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <h5><%= projects[i].project_title %></h5>
+                
+                <!-- Project Image positioned after title -->
+                <% if (projects[i].project_images) { %>
+                  <div class="my-3">
+                    <img src="/images/<%= projects[i].project_images %>" 
+                         alt="<%= projects[i].project_title %>" 
+                         style="max-width: 200px; max-height: 100px; object-fit: contain; border-radius: 10px;">
+                  </div>
+                <% } %>
+                
+                <small>
+                  Description: <%= projects[i].description %> <br>
+                  Start Date: <%= new Date(projects[i].project_start).toLocaleDateString('en-GB') %> |
+                  End Date: <%= new Date(projects[i].project_end).toLocaleDateString('en-GB') %> |
+                  Status: <%= projects[i].dynamic_status || projects[i].project_status %>
+                  <br><strong><%= currentUser && currentUser.roleid === 3 ? 'Member of project' : 'Your project' %></strong>
+                </small>
+              </div>
+              
+              <div>
+                <a href="/ISLP/<%= projects[i].projectid %>" class="btn btn-sm btn-outline-dark me-2">View</a>
+                <% if (currentUser && currentUser.roleid !== 3) { %>
+                  <a href="/editISLP/<%= projects[i].projectid %>" class="btn btn-sm btn-outline-dark me-2">Edit</a>
+                  <a href="/deleteISLP/<%= projects[i].projectid %>" class="btn btn-sm btn-outline-danger"
+                     onclick="return confirm('Are you sure you want to delete this project?');">Delete</a>
+                <% } %>
+              </div>
             </div>
           </div>
-          <small>
-            Description: <%= projects[i].description %> <br>
-            Start Date: <%= new Date(projects[i].project_start).toLocaleDateString('en-GB') %> |
-            End Date: <%= new Date(projects[i].project_end).toLocaleDateString('en-GB') %> |
-            Status: <%= projects[i].project_status %>
-            <br><strong><%= currentUser && currentUser.roleid === 3 ? 'Member of project' : 'Your project' %></strong>
-          </small>
         </div>
       <% } %>
     <% } else { %>
