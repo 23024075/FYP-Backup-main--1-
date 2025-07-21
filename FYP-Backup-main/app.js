@@ -131,19 +131,36 @@ app.get('/lecturer', checkAuthenticated, checkRole(2), (req, res) => {
 app.get('/student', checkAuthenticated, checkRole(3), (req, res) => {
   const sql = `
     SELECT p.*, s.name as project_status,
-           CASE WHEN pm.accountid IS NOT NULL THEN 1 ELSE 0 END as is_member
+           CASE 
+             WHEN CURDATE() < p.project_start THEN 'Approved'
+             WHEN CURDATE() BETWEEN p.project_start AND p.project_end THEN 'Ongoing'
+             WHEN CURDATE() > p.project_end THEN 'Finished'
+             ELSE s.name
+           END as dynamic_status,
+           CASE WHEN pm.accountid IS NOT NULL THEN 1 ELSE 0 END as is_member,
+           COALESCE(mc.member_count, 0) as member_count
     FROM project p 
     LEFT JOIN status s ON p.status_statusid = s.statusid
     LEFT JOIN project_members pm ON p.projectid = pm.projectid AND pm.accountid = ?
-    WHERE p.status_statusid != '1'
+    LEFT JOIN (
+      SELECT projectid, COUNT(*) as member_count 
+      FROM project_members 
+      GROUP BY projectid
+    ) mc ON p.projectid = mc.projectid
+    ORDER BY p.projectid DESC
   `;
-  connection.query(sql, [req.session.user.accountid], (error, results) => { 
-    if (error) throw error; 
+  
+  connection.query(sql, [req.session.user.accountid], (error, results) => {
+    if (error) {
+      console.error('Error fetching projects:', error);
+      return res.status(500).send('Error loading projects');
+    }
+    
     res.render('student', { 
       project: results,
       currentUser: req.session.user 
-    }); 
-  }); 
+    });
+  });
 });
 
 app.get('/admin', checkAuthenticated, checkRole(1), (req, res) => {
@@ -177,36 +194,45 @@ app.get('/pending', checkAuthenticated, checkRole(1), (req, res) => {
 });
 
 app.get('/search', checkAuthenticated, (req, res) => {
-  const query = req.query.query;
-  let sql, queryParams;
+  const { query } = req.query;
   
-  if (req.session.user.roleid === 3) {
-    // Student search - include membership detection and exclude pending projects
-    sql = `
-      SELECT p.*, s.name as project_status,
-             CASE WHEN pm.accountid IS NOT NULL THEN 1 ELSE 0 END as is_member
-      FROM project p 
-      LEFT JOIN status s ON p.status_statusid = s.statusid
-      LEFT JOIN project_members pm ON p.projectid = pm.projectid AND pm.accountid = ?
-      WHERE p.project_title LIKE ? AND p.status_statusid != '1'
-    `;
-    queryParams = [req.session.user.accountid, `%${query}%`];
-  } else {
-    // Admin/Lecturer search - no membership detection needed
-    sql = `
-      SELECT p.*, s.name as project_status 
-      FROM project p 
-      LEFT JOIN status s ON p.status_statusid = s.statusid 
-      WHERE p.project_title LIKE ?
-    `;
-    queryParams = [`%${query}%`];
+  if (!query) {
+    return res.redirect('back');
   }
+
+  const searchSql = `
+    SELECT p.*, s.name as project_status,
+           CASE 
+             WHEN CURDATE() < p.project_start THEN 'Approved'
+             WHEN CURDATE() BETWEEN p.project_start AND p.project_end THEN 'Ongoing'
+             WHEN CURDATE() > p.project_end THEN 'Finished'
+             ELSE s.name
+           END as dynamic_status,
+           CASE WHEN pm.accountid IS NOT NULL THEN 1 ELSE 0 END as is_member,
+           COALESCE(mc.member_count, 0) as member_count
+    FROM project p 
+    LEFT JOIN status s ON p.status_statusid = s.statusid
+    LEFT JOIN project_members pm ON p.projectid = pm.projectid AND pm.accountid = ?
+    LEFT JOIN (
+      SELECT projectid, COUNT(*) as member_count 
+      FROM project_members 
+      GROUP BY projectid
+    ) mc ON p.projectid = mc.projectid
+    WHERE p.project_title LIKE ? OR p.description LIKE ?
+    ORDER BY p.projectid DESC
+  `;
   
-  connection.query(sql, queryParams, (error, searchResults) => {
-    if (error) return res.status(500).send('Error searching for ISLP');
+  const searchTerm = `%${query}%`;
+  
+  connection.query(searchSql, [req.session.user.accountid, searchTerm, searchTerm], (error, results) => {
+    if (error) {
+      console.error('Error searching projects:', error);
+      return res.status(500).send('Error searching projects');
+    }
+    
     res.render('searchResults', { 
-      query, 
-      results: searchResults,
+      results: results,
+      query: query,
       currentUser: req.session.user 
     });
   });
@@ -869,114 +895,65 @@ app.get('/deletePost/:submissionsid', checkAuthenticated, checkRole(1, 2, 3), (r
 
 // Signup routes for students to join projects
 app.get('/signup/:projectid', checkAuthenticated, checkRole(3), (req, res) => {
-  const projectid = req.params.projectid;
-  
-  // Get project details
-  const projectSql = `
-    SELECT p.*, s.name as project_status 
-    FROM project p 
-    LEFT JOIN status s ON p.status_statusid = s.statusid 
-    WHERE p.projectid = ?
-  `;
+  const { projectid } = req.params;
+  const accountid = req.session.user.accountid;
+
+  // First check if project exists
+  const projectSql = 'SELECT * FROM project WHERE projectid = ?';
   
   connection.query(projectSql, [projectid], (err, projectResults) => {
-    if (err) {
-      console.error('Error fetching project:', err);
-      return res.status(500).send('Error fetching project details');
-    }
-    
-    if (projectResults.length === 0) {
+    if (err || projectResults.length === 0) {
       return res.status(404).send('Project not found');
     }
-    
-    const project = projectResults[0];
-    
-    // Check if project is available for signup (not pending)
-    if (project.status_statusid === '1') {
-      req.flash('error', 'This project is still pending approval and not available for signup.');
-      return res.redirect('/student');
-    }
-    
-    // Check if student is already a member
-    const memberCheckSql = `
-      SELECT * FROM project_members 
-      WHERE projectid = ? AND accountid = ?
-    `;
-    
-    connection.query(memberCheckSql, [projectid, req.session.user.accountid], (memberErr, memberResults) => {
-      if (memberErr) {
-        console.error('Error checking membership:', memberErr);
-        return res.status(500).send('Error checking membership status');
-      }
-      
-      const isMember = memberResults.length > 0;
-      
-      res.render('signup', {
-        project: project,
-        currentUser: req.session.user,
-        isMember: isMember,
-        errors: req.flash('error'),
-        messages: req.flash('success')
-      });
-    });
-  });
-});
 
-app.post('/signup/:projectid', checkAuthenticated, checkRole(3), (req, res) => {
-  const projectid = req.params.projectid;
-  const studentId = req.session.user.accountid;
-  
-  // Check if project exists and is available for signup
-  const projectSql = `
-    SELECT * FROM project 
-    WHERE projectid = ? AND status_statusid != '1'
-  `;
-  
-  connection.query(projectSql, [projectid], (projectErr, projectResults) => {
-    if (projectErr) {
-      console.error('Error fetching project:', projectErr);
-      req.flash('error', 'Error processing signup request.');
-      return res.redirect(`/signup/${projectid}`);
-    }
+    const project = projectResults[0];
+
+    // Check if user is already a member
+    const checkMemberSql = 'SELECT * FROM project_members WHERE projectid = ? AND accountid = ?';
     
-    if (projectResults.length === 0) {
-      req.flash('error', 'Project not found or not available for signup.');
-      return res.redirect('/student');
-    }
-    
-    // Check if student is already a member
-    const memberCheckSql = `
-      SELECT * FROM project_members 
-      WHERE projectid = ? AND accountid = ?
-    `;
-    
-    connection.query(memberCheckSql, [projectid, studentId], (memberErr, memberResults) => {
+    connection.query(checkMemberSql, [projectid, accountid], (memberErr, memberResults) => {
       if (memberErr) {
         console.error('Error checking membership:', memberErr);
-        req.flash('error', 'Error checking membership status.');
-        return res.redirect(`/signup/${projectid}`);
+        return res.status(500).send('Error checking membership');
       }
-      
+
       if (memberResults.length > 0) {
-        req.flash('error', 'You are already a member of this project.');
-        return res.redirect(`/signup/${projectid}`);
+        return res.redirect(`/ISLP/${projectid}`);
       }
+
+      // Check current member count
+      const countMembersSql = 'SELECT COUNT(*) as member_count FROM project_members WHERE projectid = ?';
       
-      // Add student as project member
-      const insertMemberSql = `
-        INSERT INTO project_members (projectid, accountid) 
-        VALUES (?, ?)
-      `;
-      
-      connection.query(insertMemberSql, [projectid, studentId], (insertErr, insertResults) => {
-        if (insertErr) {
-          console.error('Error adding project member:', insertErr);
-          req.flash('error', 'Error joining project. Please try again.');
-          return res.redirect(`/signup/${projectid}`);
+      connection.query(countMembersSql, [projectid], (countErr, countResults) => {
+        if (countErr) {
+          console.error('Error counting members:', countErr);
+          return res.status(500).send('Error checking project capacity');
         }
+
+        const currentMemberCount = countResults[0].member_count;
+        const maxMembers = 30;
+
+        // If project is full, redirect to project full page
+        if (currentMemberCount >= maxMembers) {
+          return res.render('projectFull', { 
+            project: project,
+            currentUser: req.session.user,
+            currentMemberCount: currentMemberCount,
+            maxMembers: maxMembers
+          });
+        }
+
+        // If not full, proceed with signup
+        const insertMemberSql = 'INSERT INTO project_members (projectid, accountid) VALUES (?, ?)';
         
-        req.flash('success', 'Successfully joined the project! You are now a member.');
-        res.redirect(`/signup/${projectid}`);
+        connection.query(insertMemberSql, [projectid, accountid], (insertErr, insertResult) => {
+          if (insertErr) {
+            console.error('Error signing up for project:', insertErr);
+            return res.status(500).send('Failed to sign up for project');
+          }
+          
+          res.redirect(`/ISLP/${projectid}`);
+        });
       });
     });
   });

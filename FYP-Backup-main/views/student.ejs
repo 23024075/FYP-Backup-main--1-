@@ -232,20 +232,45 @@
           <div class="d-flex justify-content-between align-items-center">
             <div>
               <h5><%= project[i].project_title %></h5>
+              
+              <!-- Project Image positioned after title -->
+              <% if (project[i].project_images) { %>
+                <div class="my-3">
+                  <img src="/images/<%= project[i].project_images %>" 
+                       alt="<%= project[i].project_title %>" 
+                       style="max-width: 200px; max-height: 100px; object-fit: contain; border-radius: 10px;">
+                </div>
+              <% } %>
+              
+              <small>
+                Description: <%= project[i].description %> <br>
+                Start Date: <%= new Date(project[i].project_start).toLocaleDateString('en-GB') %> |
+                End Date: <%= new Date(project[i].project_end).toLocaleDateString('en-GB') %> |
+                Status: <%= project[i].dynamic_status || project[i].project_status %> <br>
+                <strong>Members: <%= project[i].member_count || 0 %> / 30</strong>
+                <% if (project[i].is_member === 1) { %>
+                  <br><strong>You are a member of this project</strong>
+                <% } %>
+              </small>
             </div>
+            
             <div>
-              <a href="/ISLP/<%= project[i].projectid %>" class="btn btn-sm btn-outline-dark">View</a>
+              <a href="/ISLP/<%= project[i].projectid %>" class="btn btn-sm btn-outline-dark me-2">View</a>
+              <% if (project[i].is_member === 1) { %>
+                <span class="badge bg-success">Joined</span>
+              <% } else { %>
+                <% 
+                  const memberCount = project[i].member_count || 0;
+                  const isFull = memberCount >= 30;
+                %>
+                <% if (isFull) { %>
+                  <span class="badge bg-danger">Full</span>
+                <% } else { %>
+                  <a href="/signup/<%= project[i].projectid %>" class="btn btn-sm btn-outline-primary">Join</a>
+                <% } %>
+              <% } %>
             </div>
           </div>
-          <small>
-            Description: <%= project[i].description %> <br>
-            Start Date: <%= new Date(project[i].project_start).toLocaleDateString('en-GB') %> |
-            End Date: <%= new Date(project[i].project_end).toLocaleDateString('en-GB') %> |
-            Status: <%= project[i].project_status %>
-            <% if (project[i].is_member == 1) { %>
-              <br><strong>Member of project</strong>
-            <% } %>
-          </small>
         </div>
       <% } %>
     <% } else { %>
