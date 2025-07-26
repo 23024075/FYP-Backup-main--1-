@@ -47,6 +47,12 @@
             color: white;
         }
 
+        /* Ensure Profile is highlighted as active */
+        .sidebar a:nth-child(2) {
+            background-color: black;
+            color: white;
+        }
+
         .logout-button {
             margin-top: auto !important;
             margin-bottom: 20px !important;
@@ -194,17 +200,23 @@
     <!-- Sidebar -->
     <div class="sidebar">
         <% if (user && user.roleid === 3) { %>
+            <!-- Student Navigation -->
             <a href="/student">Home</a>
             <a href="/profile" class="active">Profile</a>
             <a href="/myproject">My Projects</a>
         <% } else if (user && user.roleid === 2) { %>
+            <!-- Lecturer Navigation -->
             <a href="/lecturer">Home</a>
             <a href="/profile" class="active">Profile</a>
             <a href="/myproject">My Projects</a>
+            <a href="/memberRequests">Requests</a>
         <% } else if (user && user.roleid === 1) { %>
+            <!-- Admin Navigation -->
             <a href="/admin">Home</a>
             <a href="/profile" class="active">Profile</a>
             <a href="/pending">Pending</a>
+            <a href="/accounts">Accounts</a>
+            <a href="/memberRequests">Requests</a>
         <% } %>
         <a href="/logout" class="logout-button" onclick="return confirm('Are you sure you want to logout?');">Logout</a>
     </div>

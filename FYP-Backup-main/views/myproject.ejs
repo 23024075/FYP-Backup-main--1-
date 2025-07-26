@@ -180,11 +180,14 @@
   <div class="sidebar">
     <% if (currentUser && currentUser.roleid === 3) { %>
       <a href="/student">Home</a>
+      <a href="/profile">Profile</a>
+      <a href="/myproject">My Projects</a>
     <% } else { %>
       <a href="/lecturer">Home</a>
+      <a href="/profile">Profile</a>
+      <a href="/feedback">My Projects</a>
+      <a href="/memberRequests">Requests</a>
     <% } %>
-    <a href="/profile">Profile</a>
-    <a href="/myproject">My Projects</a>
     <a href="/logout" class="logout-button" onclick="return confirm('Are you sure you want to logout?');">Logout</a>
   </div>
 

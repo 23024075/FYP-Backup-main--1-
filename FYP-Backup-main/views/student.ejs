@@ -68,7 +68,6 @@
       justify-content: center;
       align-items: center;
       margin-bottom: 30px;
-      position: relative;
     }
 
     .dashboard-title {
@@ -99,10 +98,13 @@
     .dashboard-box {
       background-color: #d9d9d9;
       border-radius: 20px;
-      min-height: 100px;
+      min-height: 280px;
       margin: 20px auto;
       width: 80%;
       padding: 15px 25px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
     }
 
     .dashboard-box h5 {
@@ -113,25 +115,13 @@
       color: #555;
     }
 
-    .my-project-badge {
-      background-color: #28a745;
-      color: white;
-      padding: 2px 8px;
-      border-radius: 12px;
-      font-size: 0.75rem;
-      margin-left: 10px;
-    }
-
-    .no-projects {
-      text-align: center;
-      padding: 60px 20px;
-      color: #666;
-    }
-
-    .no-projects i {
-      font-size: 3rem;
-      margin-bottom: 20px;
-      color: #ccc;
+    .dashboard-content {
+      position: relative;
+      background: transparent;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
     }
 
     .stats-section {
@@ -160,6 +150,18 @@
       color: #666;
       font-size: 0.9rem;
       margin-top: 5px;
+    }
+
+    .no-projects {
+      text-align: center;
+      padding: 60px 20px;
+      color: #666;
+    }
+
+    .no-projects i {
+      font-size: 3rem;
+      margin-bottom: 20px;
+      color: #ccc;
     }
   </style>
 </head>
@@ -208,7 +210,7 @@
           <% 
             let activeProjectsCount = 0;
             if (project) {
-              activeProjectsCount = project.filter(p => p.project_status === 'Ongoing' || p.project_status === 'Approved').length;
+              activeProjectsCount = project.filter(p => p.dynamic_status === 'Ongoing' || p.dynamic_status === 'Approved' || p.project_status === 'Ongoing' || p.project_status === 'Approved').length;
             }
           %>
           <%= activeProjectsCount %>
@@ -229,46 +231,41 @@
     <% if (project && project.length > 0) { %>
       <% for (let i = 0; i < project.length; i++) { %>
         <div class="dashboard-box">
-          <div class="d-flex justify-content-between align-items-center">
-            <div>
-              <h5><%= project[i].project_title %></h5>
-              
-              <!-- Project Image positioned after title -->
-              <% if (project[i].project_images) { %>
-                <div class="my-3">
-                  <img src="/images/<%= project[i].project_images %>" 
-                       alt="<%= project[i].project_title %>" 
-                       style="max-width: 200px; max-height: 100px; object-fit: contain; border-radius: 10px;">
-                </div>
-              <% } %>
-              
-              <small>
-                Description: <%= project[i].description %> <br>
-                Start Date: <%= new Date(project[i].project_start).toLocaleDateString('en-GB') %> |
-                End Date: <%= new Date(project[i].project_end).toLocaleDateString('en-GB') %> |
-                Status: <%= project[i].dynamic_status || project[i].project_status %> <br>
-                <strong>Members: <%= project[i].member_count || 0 %> / 30</strong>
-                <% if (project[i].is_member === 1) { %>
-                  <br><strong>You are a member of this project</strong>
+          <!-- Content -->
+          <div class="dashboard-content">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <h5><%= project[i].project_title %></h5>
+                
+                <!-- Project Image positioned after title -->
+                <% if (project[i].project_images) { %>
+                  <div class="my-3">
+                    <img src="/images/<%= project[i].project_images %>" 
+                         alt="<%= project[i].project_title %>" 
+                         style="max-width: 200px; max-height: 100px; object-fit: contain; border-radius: 10px;">
+                  </div>
                 <% } %>
-              </small>
-            </div>
-            
-            <div>
-              <a href="/ISLP/<%= project[i].projectid %>" class="btn btn-sm btn-outline-dark me-2">View</a>
-              <% if (project[i].is_member === 1) { %>
-                <span class="badge bg-success">Joined</span>
-              <% } else { %>
-                <% 
-                  const memberCount = project[i].member_count || 0;
-                  const isFull = memberCount >= 30;
-                %>
-                <% if (isFull) { %>
-                  <span class="badge bg-danger">Full</span>
+                
+                <small>
+                  Description: <%= project[i].description %> <br>
+                  Start Date: <%= new Date(project[i].project_start).toLocaleDateString('en-GB') %> |
+                  End Date: <%= new Date(project[i].project_end).toLocaleDateString('en-GB') %> |
+                  Status: <%= project[i].dynamic_status || project[i].project_status %>
+                  <% if (project[i].is_member === 1) { %>
+                    <br><strong>You are a member of this project</strong>
+                  <% } %>
+                </small>
+              </div>
+              
+              <!-- Buttons positioned same as lecturer dashboard (top right) -->
+              <div>
+                <a href="/ISLP/<%= project[i].projectid %>" class="btn btn-sm btn-outline-dark me-2">View</a>
+                <% if (project[i].is_member === 1) { %>
+                  <span class="badge bg-success">Joined</span>
                 <% } else { %>
                   <a href="/signup/<%= project[i].projectid %>" class="btn btn-sm btn-outline-primary">Join</a>
                 <% } %>
-              <% } %>
+              </div>
             </div>
           </div>
         </div>
@@ -277,7 +274,7 @@
       <div class="dashboard-box no-projects">
         <i class="fas fa-inbox"></i>
         <h4>No Projects Available</h4>
-        <p>There are currently no projects to display. Check back later for new opportunities!</p>
+        <p>There are currently no approved projects to display. Check back later for new opportunities!</p>
       </div>
     <% } %>
 
@@ -297,3 +294,5 @@
 
 </body>
 </html>
+
+<!-- Tan Ye Kai 23024918 -->

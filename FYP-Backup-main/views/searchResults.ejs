@@ -141,6 +141,7 @@
       <a href="/lecturer">Home</a>
       <a href="/profile">Profile</a>
       <a href="/feedback">My Projects</a>
+      <a href="/memberRequests">Requests</a>
       <a href="/logout" class="logout-button" onclick="return confirm('Are you sure you want to logout?');">Logout</a>
     <% } else if (currentUser.roleid === 3) { %>
       <a href="/student">Home</a>
@@ -151,6 +152,8 @@
       <a href="/admin">Home</a>
       <a href="/profile">Profile</a>
       <a href="/pending">Pending</a>
+      <a href="/accounts">Accounts</a>
+      <a href="/memberRequests">Requests</a>
       <a href="/logout" class="logout-button" onclick="return confirm('Are you sure you want to logout?');">Logout</a>
     <% } %>
   </div>
@@ -193,8 +196,7 @@
                   Description: <%= results[i].description %> <br>
                   Start Date: <%= new Date(results[i].project_start).toLocaleDateString('en-GB') %> |
                   End Date: <%= new Date(results[i].project_end).toLocaleDateString('en-GB') %> |
-                  Status: <%= results[i].dynamic_status || results[i].project_status %> <br>
-                  <strong>Members: <%= results[i].member_count || 0 %> / 30</strong>
+                  Status: <%= results[i].dynamic_status || results[i].project_status %>
                   <% if (parseInt(results[i].project_head) === (currentUser ? currentUser.accountid : -1)) { %>
                     <br><strong>Your project</strong>
                   <% } else if (results[i].is_member) { %>
@@ -213,15 +215,7 @@
                     <% if (results[i].is_member) { %>
                       <span class="badge bg-success">Joined</span>
                     <% } else { %>
-                      <% 
-                        const memberCount = results[i].member_count || 0;
-                        const isFull = memberCount >= 30;
-                      %>
-                      <% if (isFull) { %>
-                        <span class="badge bg-danger">Full</span>
-                      <% } else { %>
-                        <a href="/signup/<%= results[i].projectid %>" class="btn btn-sm btn-outline-primary">Join</a>
-                      <% } %>
+                      <a href="/signup/<%= results[i].projectid %>" class="btn btn-sm btn-outline-primary">Join</a>
                     <% } %>
                   <% } %>
                 <% } %>

@@ -123,12 +123,12 @@
     /* Username Badge Styles */
     .admin-badge, .lecturer-badge, .student-badge {
       position: fixed;
-      top: 20px;
+      bottom: 20px;
       right: 20px;
       padding: 8px 16px;
       border-radius: 20px;
-      font-weight: bold;
-      font-size: 14px;
+      font-weight: 500;
+      font-size: 0.9rem;
       z-index: 1000;
       color: white;
     }
@@ -174,11 +174,25 @@
     <% } %>
 
     <% if (isMember) { %>
-      <!-- Already a Member -->
-      <div class="member-status">
-        <h4>✓ You are already a member of this project</h4>
-        <p>You have successfully joined this project and can participate in all activities.</p>
-      </div>
+      <% if (memberStatus === 'approved') { %>
+        <!-- Already a Member -->
+        <div class="member-status">
+          <h4>✓ You are already a member of this project</h4>
+          <p>You have successfully joined this project and can participate in all activities.</p>
+        </div>
+      <% } else if (memberStatus === 'pending') { %>
+        <!-- Pending Approval -->
+        <div class="member-status" style="background-color: #fff3cd; border-color: #ffeaa7; color: #856404;">
+          <h4>⏳ Your request is pending approval</h4>
+          <p>Your join request has been submitted and is waiting for approval from the project facilitator.</p>
+        </div>
+      <% } else if (memberStatus === 'rejected') { %>
+        <!-- Rejected -->
+        <div class="member-status" style="background-color: #f8d7da; border-color: #f5c6cb; color: #721c24;">
+          <h4>❌ Your request was rejected</h4>
+          <p>Your join request was not approved. Please contact the project facilitator for more information.</p>
+        </div>
+      <% } %>
     <% } else { %>
       <!-- Signup Form -->
       <form action="/signup/<%= project.projectid %>" method="POST">

@@ -68,22 +68,12 @@
       justify-content: center; /* Center the title */
       align-items: center;
       margin-bottom: 30px;
-      position: relative;
     }
 
     .dashboard-title {
       font-weight: bold;
       font-size: 2rem;
       margin: 0;
-    }
-
-    .add-button {
-      position: absolute;
-      right: 0;
-      background-color: black;
-      color: white;
-      font-weight: bold;
-      border: none;
     }
 
     .admin-badge {
@@ -170,6 +160,8 @@
     <a href="/admin">Home</a>
     <a href="/profile">Profile</a>
     <a href="/pending">Pending</a>
+    <a href="/accounts">Accounts</a>
+    <a href="/memberRequests">Requests</a>
     <a href="/logout" class="logout-button" onclick="return confirm('Are you sure you want to logout?');">Logout</a>
   </div>
 
@@ -177,7 +169,6 @@
   <div class="main-content">
     <div class="top-bar">
       <h2 class="dashboard-title">Admin Dashboard</h2>
-      <a href="/addISLP" class="btn add-button">+ Add Project</a>
     </div>
 
     <!-- Statistics Section -->
@@ -195,26 +186,26 @@
       <div class="stat-card">
         <div class="stat-number">
           <% 
-            let myProjectsCount = 0;
-            if (project && currentUser) {
-              myProjectsCount = project.filter(p => parseInt(p.project_head) === currentUser.accountid).length;
-            }
-          %>
-          <%= myProjectsCount %>
-        </div>
-        <div class="stat-label">My Projects</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-number">
-          <% 
             let activeProjectsCount = 0;
             if (project) {
-              activeProjectsCount = project.filter(p => p.project_status === 'Ongoing' || p.project_status === 'Approved').length;
+              activeProjectsCount = project.filter(p => p.dynamic_status === 'Ongoing' || p.dynamic_status === 'Approved' || p.project_status === 'Ongoing' || p.project_status === 'Approved').length;
             }
           %>
           <%= activeProjectsCount %>
         </div>
         <div class="stat-label">Active Projects</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">
+          <% 
+            let pendingProjectsCount = 0;
+            if (project) {
+              pendingProjectsCount = project.filter(p => p.project_status === 'Pending').length;
+            }
+          %>
+          <%= pendingProjectsCount %>
+        </div>
+        <div class="stat-label">Pending Projects</div>
       </div>
     </div>
 

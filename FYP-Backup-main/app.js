@@ -137,16 +137,13 @@ app.get('/student', checkAuthenticated, checkRole(3), (req, res) => {
              WHEN CURDATE() > p.project_end THEN 'Finished'
              ELSE s.name
            END as dynamic_status,
-           CASE WHEN pm.accountid IS NOT NULL THEN 1 ELSE 0 END as is_member,
-           COALESCE(mc.member_count, 0) as member_count
+           CASE WHEN pm.accountid IS NOT NULL AND pm.status = 'approved' THEN 1 ELSE 0 END as is_member,
+           pm.status as member_status,
+           (SELECT COUNT(*) FROM project_members pm2 WHERE pm2.projectid = p.projectid AND pm2.status = 'approved') as member_count
     FROM project p 
     LEFT JOIN status s ON p.status_statusid = s.statusid
     LEFT JOIN project_members pm ON p.projectid = pm.projectid AND pm.accountid = ?
-    LEFT JOIN (
-      SELECT projectid, COUNT(*) as member_count 
-      FROM project_members 
-      GROUP BY projectid
-    ) mc ON p.projectid = mc.projectid
+    WHERE (p.status_statusid != 1) OR (p.status_statusid = 1 AND pm.accountid IS NOT NULL)
     ORDER BY p.projectid DESC
   `;
   
@@ -159,7 +156,7 @@ app.get('/student', checkAuthenticated, checkRole(3), (req, res) => {
     res.render('student', { 
       project: results,
       currentUser: req.session.user 
-    });
+    }); 
   });
 });
 
@@ -208,16 +205,10 @@ app.get('/search', checkAuthenticated, (req, res) => {
              WHEN CURDATE() > p.project_end THEN 'Finished'
              ELSE s.name
            END as dynamic_status,
-           CASE WHEN pm.accountid IS NOT NULL THEN 1 ELSE 0 END as is_member,
-           COALESCE(mc.member_count, 0) as member_count
+           CASE WHEN pm.accountid IS NOT NULL THEN 1 ELSE 0 END as is_member
     FROM project p 
     LEFT JOIN status s ON p.status_statusid = s.statusid
     LEFT JOIN project_members pm ON p.projectid = pm.projectid AND pm.accountid = ?
-    LEFT JOIN (
-      SELECT projectid, COUNT(*) as member_count 
-      FROM project_members 
-      GROUP BY projectid
-    ) mc ON p.projectid = mc.projectid
     WHERE p.project_title LIKE ? OR p.description LIKE ?
     ORDER BY p.projectid DESC
   `;
@@ -716,14 +707,20 @@ app.get('/feedback', checkAuthenticated, checkRole(1, 2), (req, res) => {
 
 app.get('/myproject', checkAuthenticated, (req, res) => {
   if (req.session.user.roleid === 3) {
-    // Student: Get projects where they are members, excluding pending projects
+    // Student: Get ALL projects where they are members (past, present, future)
     const sql = `
-      SELECT p.*, s.name as project_status 
+      SELECT p.*, s.name as project_status,
+             CASE 
+               WHEN CURDATE() < p.project_start THEN 'Upcoming'
+               WHEN CURDATE() BETWEEN p.project_start AND p.project_end THEN 'Ongoing'
+               WHEN CURDATE() > p.project_end THEN 'Completed'
+               ELSE s.name
+             END as dynamic_status
       FROM project p 
       LEFT JOIN status s ON p.status_statusid = s.statusid
       INNER JOIN project_members pm ON p.projectid = pm.projectid
-      WHERE pm.accountid = ? AND p.status_statusid != '1'
-      ORDER BY p.projectid DESC
+      WHERE pm.accountid = ?
+      ORDER BY p.project_start DESC
     `;
     
     connection.query(sql, [req.session.user.accountid], (error, results) => {
@@ -739,11 +736,17 @@ app.get('/myproject', checkAuthenticated, (req, res) => {
   } else {
     // Lecturer/Admin: Get projects they created/own
     const sql = `
-      SELECT p.*, s.name as project_status 
+      SELECT p.*, s.name as project_status,
+             CASE 
+               WHEN CURDATE() < p.project_start THEN 'Upcoming'
+               WHEN CURDATE() BETWEEN p.project_start AND p.project_end THEN 'Ongoing'
+               WHEN CURDATE() > p.project_end THEN 'Completed'
+               ELSE s.name
+             END as dynamic_status
       FROM project p 
       LEFT JOIN status s ON p.status_statusid = s.statusid
       WHERE p.project_head = ?
-      ORDER BY p.projectid DESC
+      ORDER BY p.project_start DESC
     `;
     
     connection.query(sql, [req.session.user.accountid], (error, results) => {
@@ -908,7 +911,7 @@ app.get('/signup/:projectid', checkAuthenticated, checkRole(3), (req, res) => {
 
     const project = projectResults[0];
 
-    // Check if user is already a member
+    // Check if user is already a member and get their status
     const checkMemberSql = 'SELECT * FROM project_members WHERE projectid = ? AND accountid = ?';
     
     connection.query(checkMemberSql, [projectid, accountid], (memberErr, memberResults) => {
@@ -917,48 +920,413 @@ app.get('/signup/:projectid', checkAuthenticated, checkRole(3), (req, res) => {
         return res.status(500).send('Error checking membership');
       }
 
-      if (memberResults.length > 0) {
-        return res.redirect(`/ISLP/${projectid}`);
+      const isMember = memberResults.length > 0;
+      const memberStatus = isMember ? memberResults[0].status : null;
+
+      // Always render the signup page with all necessary data
+      res.render('signup', { 
+        project: project,
+        currentUser: req.session.user,
+        isMember: isMember,
+        memberStatus: memberStatus, // Add this line
+        errors: req.flash('error'),
+        messages: req.flash('success')
+      });
+    });
+  });
+});
+
+// Replace your existing signup POST route with this:
+app.post('/signup/:projectid', checkAuthenticated, checkRole(3), (req, res) => {
+  const { projectid } = req.params;
+  const accountid = req.session.user.accountid;
+
+  // Check if user already has a request or is already a member
+  const checkMemberSql = 'SELECT * FROM project_members WHERE projectid = ? AND accountid = ?';
+  
+  connection.query(checkMemberSql, [projectid, accountid], (memberErr, memberResults) => {
+    if (memberErr) {
+      console.error('Error checking membership:', memberErr);
+      req.flash('error', 'Error checking membership');
+      return res.redirect(`/signup/${projectid}`);
+    }
+
+    if (memberResults.length > 0) {
+      const existingStatus = memberResults[0].status;
+      if (existingStatus === 'pending') {
+        req.flash('error', 'Your request is already pending approval');
+      } else if (existingStatus === 'approved') {
+        req.flash('error', 'You are already a member of this project');
+      } else if (existingStatus === 'rejected') {
+        req.flash('error', 'Your previous request was rejected. Please contact the project lead.');
+      }
+      return res.redirect(`/signup/${projectid}`);
+    }
+
+    // Insert the user with pending status
+    const insertMemberSql = 'INSERT INTO project_members (projectid, accountid, status) VALUES (?, ?, ?)';
+    
+    connection.query(insertMemberSql, [projectid, accountid, 'pending'], (insertErr, insertResult) => {
+      if (insertErr) {
+        console.error('Error submitting join request:', insertErr);
+        req.flash('error', 'Error submitting join request');
+        return res.redirect(`/signup/${projectid}`);
+      }
+      
+      req.flash('success', 'Join request submitted! Waiting for approval from project facilitator.');
+      res.redirect(`/signup/${projectid}`);
+    });
+  });
+});
+
+// Add these routes before the PORT section at the end of your app.js file
+
+// Account management routes for admin
+app.get('/accounts', checkAuthenticated, checkRole(1), (req, res) => {
+  const sql = `
+    SELECT accountid, username, email, phone, roleid, profile_description
+    FROM account 
+    ORDER BY accountid DESC
+  `;
+  connection.query(sql, (error, results) => { 
+    if (error) {
+      console.error('Error fetching accounts:', error);
+      return res.status(500).send('Error loading accounts');
+    }
+    
+    // Add role names manually since there's no role table
+    const accountsWithRoles = results.map(account => {
+      let role_name;
+      switch(account.roleid) {
+        case 1:
+          role_name = 'Admin';
+          break;
+        case 2:
+          role_name = 'Lecturer';
+          break;
+        case 3:
+          role_name = 'Student';
+          break;
+        default:
+          role_name = 'Unknown';
+      }
+      return {
+        ...account,
+        role_name: role_name
+      };
+    });
+    
+    res.render('accounts', { 
+      accounts: accountsWithRoles,
+      currentUser: req.session.user,
+      errors: req.flash('error'),
+      messages: req.flash('success')
+    }); 
+  }); 
+});
+
+// Add new account page
+app.get('/addAccount', checkAuthenticated, checkRole(1), (req, res) => {
+  // Since there's no role table, we'll use hardcoded roles
+  const roles = [
+    { roleid: 1, name: 'Admin' },
+    { roleid: 2, name: 'Lecturer' },
+    { roleid: 3, name: 'Student' }
+  ];
+  
+  res.render('addAccount', { 
+    roles: roles,
+    currentUser: req.session.user,
+    errors: req.flash('error'),
+    messages: req.flash('success')
+  });
+});
+
+// Add new account POST
+app.post('/addAccount', checkAuthenticated, checkRole(1), (req, res) => {
+  const { username, email, password, phone, roleid, profile_description } = req.body;
+
+  // Validation
+  if (!username || !email || !password || !roleid) {
+    req.flash('error', 'Username, email, password, and role are required.');
+    return res.redirect('/addAccount');
+  }
+
+  // Check if email already exists
+  const checkEmailSql = 'SELECT accountid FROM account WHERE email = ?';
+  connection.query(checkEmailSql, [email], (checkErr, checkResults) => {
+    if (checkErr) {
+      console.error('Error checking email:', checkErr);
+      req.flash('error', 'Error checking email availability');
+      return res.redirect('/addAccount');
+    }
+
+    if (checkResults.length > 0) {
+      req.flash('error', 'Email already exists. Please use a different email.');
+      return res.redirect('/addAccount');
+    }
+
+    // Insert new account
+    const insertSql = 'INSERT INTO account (username, email, password, phone, roleid, profile_description) VALUES (?, ?, ?, ?, ?, ?)';
+    connection.query(insertSql, [username, email, password, phone || null, roleid, profile_description || null], (insertErr, insertResult) => {
+      if (insertErr) {
+        console.error('Error adding account:', insertErr);
+        req.flash('error', 'Failed to create account');
+        return res.redirect('/addAccount');
+      }
+      
+      req.flash('success', 'Account created successfully!');
+      res.redirect('/accounts');
+    });
+  });
+});
+
+// Edit account page
+app.get('/editAccount/:accountid', checkAuthenticated, checkRole(1), (req, res) => {
+  const { accountid } = req.params;
+  
+  // Get account details
+  const accountSql = 'SELECT * FROM account WHERE accountid = ?';
+  
+  connection.query(accountSql, [accountid], (accountErr, accountResults) => {
+    if (accountErr || accountResults.length === 0) {
+      req.flash('error', 'Account not found');
+      return res.redirect('/accounts');
+    }
+    
+    // Hardcoded roles since there's no role table
+    const roles = [
+      { roleid: 1, name: 'Admin' },
+      { roleid: 2, name: 'Lecturer' },
+      { roleid: 3, name: 'Student' }
+    ];
+    
+    res.render('editAccount', { 
+      account: accountResults[0],
+      roles: roles,
+      currentUser: req.session.user,
+      errors: req.flash('error'),
+      messages: req.flash('success')
+    });
+  });
+});
+
+// Edit account POST
+app.post('/editAccount/:accountid', checkAuthenticated, checkRole(1), (req, res) => {
+  const { accountid } = req.params;
+  const { username, email, password, phone, roleid, profile_description } = req.body;
+
+  // Validation
+  if (!username || !email || !roleid) {
+    req.flash('error', 'Username, email, and role are required.');
+    return res.redirect(`/editAccount/${accountid}`);
+  }
+
+  // Check if email already exists for other accounts
+  const checkEmailSql = 'SELECT accountid FROM account WHERE email = ? AND accountid != ?';
+  connection.query(checkEmailSql, [email, accountid], (checkErr, checkResults) => {
+    if (checkErr) {
+      console.error('Error checking email:', checkErr);
+      req.flash('error', 'Error checking email availability');
+      return res.redirect(`/editAccount/${accountid}`);
+    }
+
+    if (checkResults.length > 0) {
+      req.flash('error', 'Email already exists. Please use a different email.');
+      return res.redirect(`/editAccount/${accountid}`);
+    }
+
+    // Build update query
+    let updateFields = ['username = ?', 'email = ?', 'roleid = ?'];
+    let values = [username, email, roleid];
+
+    if (password && password.trim() !== '') {
+      updateFields.push('password = ?');
+      values.push(password);
+    }
+
+    if (phone !== undefined) {
+      updateFields.push('phone = ?');
+      values.push(phone || null);
+    }
+
+    if (profile_description !== undefined) {
+      updateFields.push('profile_description = ?');
+      values.push(profile_description || null);
+    }
+
+    values.push(accountid);
+
+    const updateSql = `UPDATE account SET ${updateFields.join(', ')} WHERE accountid = ?`;
+    connection.query(updateSql, values, (updateErr, updateResult) => {
+      if (updateErr) {
+        console.error('Error updating account:', updateErr);
+        req.flash('error', 'Failed to update account');
+        return res.redirect(`/editAccount/${accountid}`);
+      }
+      
+      req.flash('success', 'Account updated successfully!');
+      res.redirect('/accounts');
+    });
+  });
+});
+
+// Delete account
+app.get('/deleteAccount/:accountid', checkAuthenticated, checkRole(1), (req, res) => {
+  const { accountid } = req.params;
+
+  // Prevent admin from deleting their own account
+  if (parseInt(accountid) === req.session.user.accountid) {
+    req.flash('error', 'You cannot delete your own account.');
+    return res.redirect('/accounts');
+  }
+
+  // Check if account has any projects or submissions before deleting
+  const checkProjectsSql = 'SELECT COUNT(*) as project_count FROM project WHERE project_head = ?';
+  const checkSubmissionsSql = 'SELECT COUNT(*) as submission_count FROM submissions WHERE accountid = ?';
+  const checkMembershipSql = 'SELECT COUNT(*) as membership_count FROM project_members WHERE accountid = ?';
+
+  connection.query(checkProjectsSql, [accountid], (projErr, projResults) => {
+    if (projErr) {
+      console.error('Error checking projects:', projErr);
+      req.flash('error', 'Error checking account dependencies');
+      return res.redirect('/accounts');
+    }
+
+    const projectCount = projResults[0].project_count;
+
+    connection.query(checkSubmissionsSql, [accountid], (subErr, subResults) => {
+      if (subErr) {
+        console.error('Error checking submissions:', subErr);
+        req.flash('error', 'Error checking account dependencies');
+        return res.redirect('/accounts');
       }
 
-      // Check current member count
-      const countMembersSql = 'SELECT COUNT(*) as member_count FROM project_members WHERE projectid = ?';
-      
-      connection.query(countMembersSql, [projectid], (countErr, countResults) => {
-        if (countErr) {
-          console.error('Error counting members:', countErr);
-          return res.status(500).send('Error checking project capacity');
+      const submissionCount = subResults[0].submission_count;
+
+      connection.query(checkMembershipSql, [accountid], (memErr, memResults) => {
+        if (memErr) {
+          console.error('Error checking memberships:', memErr);
+          req.flash('error', 'Error checking account dependencies');
+          return res.redirect('/accounts');
         }
 
-        const currentMemberCount = countResults[0].member_count;
-        const maxMembers = 30;
+        const membershipCount = memResults[0].membership_count;
 
-        // If project is full, redirect to project full page
-        if (currentMemberCount >= maxMembers) {
-          return res.render('projectFull', { 
-            project: project,
-            currentUser: req.session.user,
-            currentMemberCount: currentMemberCount,
-            maxMembers: maxMembers
-          });
+        // If account has dependencies, show warning
+        if (projectCount > 0 || submissionCount > 0 || membershipCount > 0) {
+          req.flash('error', `Cannot delete account. User has ${projectCount} projects, ${submissionCount} submissions, and ${membershipCount} project memberships. Please transfer or remove these first.`);
+          return res.redirect('/accounts');
         }
 
-        // If not full, proceed with signup
-        const insertMemberSql = 'INSERT INTO project_members (projectid, accountid) VALUES (?, ?)';
-        
-        connection.query(insertMemberSql, [projectid, accountid], (insertErr, insertResult) => {
-          if (insertErr) {
-            console.error('Error signing up for project:', insertErr);
-            return res.status(500).send('Failed to sign up for project');
+        // Safe to delete
+        const deleteSql = 'DELETE FROM account WHERE accountid = ?';
+        connection.query(deleteSql, [accountid], (deleteErr, deleteResult) => {
+          if (deleteErr) {
+            console.error('Error deleting account:', deleteErr);
+            req.flash('error', 'Failed to delete account');
+            return res.redirect('/accounts');
           }
           
-          res.redirect(`/ISLP/${projectid}`);
+          req.flash('success', 'Account deleted successfully!');
+          res.redirect('/accounts');
         });
       });
     });
   });
 });
 
+// Route to view pending member requests
+app.get('/memberRequests', checkAuthenticated, checkRole(1, 2), (req, res) => {
+  let sql;
+  let params = [];
+
+  if (req.session.user.roleid === 1) {
+    // Admin can see all pending requests
+    sql = `
+      SELECT pm.*, p.project_title, p.project_head, a.username, a.email
+      FROM project_members pm
+      JOIN project p ON pm.projectid = p.projectid
+      JOIN account a ON pm.accountid = a.accountid
+      WHERE pm.status = 'pending'
+      ORDER BY pm.added_date DESC
+    `;
+  } else {
+    // Lecturer can only see requests for their projects
+    sql = `
+      SELECT pm.*, p.project_title, p.project_head, a.username, a.email
+      FROM project_members pm
+      JOIN project p ON pm.projectid = p.projectid
+      JOIN account a ON pm.accountid = a.accountid
+      WHERE pm.status = 'pending' AND p.project_head = ?
+      ORDER BY pm.added_date DESC
+    `;
+    params = [req.session.user.accountid];
+  }
+
+  connection.query(sql, params, (error, results) => {
+    if (error) {
+      console.error('Error fetching member requests:', error);
+      return res.status(500).send('Error loading member requests');
+    }
+    
+    res.render('memberRequests', { 
+      requests: results,
+      currentUser: req.session.user,
+      errors: req.flash('error'),
+      messages: req.flash('success')
+    });
+  });
+});
+
+// Route to approve/reject member requests
+app.post('/memberRequest/:id/:action', checkAuthenticated, checkRole(1, 2), (req, res) => {
+  const requestId = req.params.id;
+  const action = req.params.action; // 'approve' or 'reject'
+  
+  if (!['approve', 'reject'].includes(action)) {
+    req.flash('error', 'Invalid action');
+    return res.redirect('/memberRequests');
+  }
+
+  // First check if the request exists and if the user has permission
+  const checkSql = `
+    SELECT pm.*, p.project_head
+    FROM project_members pm
+    JOIN project p ON pm.projectid = p.projectid
+    WHERE pm.id = ? AND pm.status = 'pending'
+  `;
+
+  connection.query(checkSql, [requestId], (checkErr, checkResults) => {
+    if (checkErr || checkResults.length === 0) {
+      req.flash('error', 'Request not found or already processed');
+      return res.redirect('/memberRequests');
+    }
+
+    const request = checkResults[0];
+    
+    // Check permissions
+    if (req.session.user.roleid !== 1 && request.project_head !== req.session.user.accountid) {
+      req.flash('error', 'You can only manage requests for your own projects');
+      return res.redirect('/memberRequests');
+    }
+
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+    const updateSql = 'UPDATE project_members SET status = ? WHERE id = ?';
+
+    connection.query(updateSql, [newStatus, requestId], (updateErr) => {
+      if (updateErr) {
+        console.error('Error updating request status:', updateErr);
+        req.flash('error', 'Error processing request');
+        return res.redirect('/memberRequests');
+      }
+
+      const message = action === 'approve' ? 'Student approved successfully!' : 'Request rejected successfully.';
+      req.flash('success', message);
+      res.redirect('/memberRequests');
+    });
+  });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}/login`));
-
