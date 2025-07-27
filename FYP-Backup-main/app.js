@@ -184,8 +184,8 @@ app.get('/student', checkAuthenticated, checkRole(3), (req, res) => {
            (SELECT COUNT(*) FROM project_members pm2 WHERE pm2.projectid = p.projectid AND pm2.status = 'approved') as member_count
     FROM project p 
     LEFT JOIN status s ON p.status_statusid = s.statusid
-    LEFT JOIN project_members pm ON p.projectid = pm.projectid AND pm.accountid = ?
-    WHERE (p.status_statusid != 1) OR (p.status_statusid = 1 AND pm.accountid IS NOT NULL)
+    LEFT JOIN project_members pm ON p.projectid = pm.projectid AND pm.accountid = ? AND pm.status = 'approved'
+    WHERE (p.status_statusid != 1) OR (p.status_statusid = 1 AND pm.accountid IS NOT NULL AND pm.status = 'approved')
     ORDER BY p.projectid DESC
   `;
   
@@ -247,10 +247,10 @@ app.get('/search', checkAuthenticated, (req, res) => {
              WHEN CURDATE() > p.project_end THEN 'Finished'
              ELSE s.name
            END as dynamic_status,
-           CASE WHEN pm.accountid IS NOT NULL THEN 1 ELSE 0 END as is_member
+           CASE WHEN pm.accountid IS NOT NULL AND pm.status = 'approved' THEN 1 ELSE 0 END as is_member
     FROM project p 
     LEFT JOIN status s ON p.status_statusid = s.statusid
-    LEFT JOIN project_members pm ON p.projectid = pm.projectid AND pm.accountid = ?
+    LEFT JOIN project_members pm ON p.projectid = pm.projectid AND pm.accountid = ? AND pm.status = 'approved'
     WHERE p.project_title LIKE ? OR p.description LIKE ?
     ORDER BY p.projectid DESC
   `;
@@ -291,11 +291,12 @@ app.get('/ISLP/:projectid', checkAuthenticated, (req, res) => {
     ORDER BY sub.submission_date DESC
   `;
 
+  // Updated members query to only show APPROVED members
   const membersSql = `
     SELECT pm.*, acc.username, acc.email, acc.roleid
     FROM project_members pm
     JOIN account acc ON pm.accountid = acc.accountid
-    WHERE pm.projectid = ?
+    WHERE pm.projectid = ? AND pm.status = 'approved'
     ORDER BY acc.username
   `;
 
@@ -812,7 +813,7 @@ app.get('/feedback', checkAuthenticated, checkRole(1, 2), (req, res) => {
 
 app.get('/myproject', checkAuthenticated, (req, res) => {
   if (req.session.user.roleid === 3) {
-    // Student: Get ALL projects where they are members (past, present, future)
+    // Student: Get ONLY projects where they are APPROVED members
     const sql = `
       SELECT p.*, s.name as project_status,
              CASE 
@@ -824,7 +825,7 @@ app.get('/myproject', checkAuthenticated, (req, res) => {
       FROM project p 
       LEFT JOIN status s ON p.status_statusid = s.statusid
       INNER JOIN project_members pm ON p.projectid = pm.projectid
-      WHERE pm.accountid = ?
+      WHERE pm.accountid = ? AND pm.status = 'approved'
       ORDER BY p.project_start DESC
     `;
     
@@ -839,7 +840,7 @@ app.get('/myproject', checkAuthenticated, (req, res) => {
       });
     });
   } else {
-    // Lecturer/Admin: Get projects they created/own
+    // Lecturer/Admin: Get projects they created/own (unchanged)
     const sql = `
       SELECT p.*, s.name as project_status,
              CASE 
