@@ -3,7 +3,21 @@ const mysql = require('mysql2');
 const multer = require('multer'); 
 const session = require('express-session');
 const flash = require('connect-flash');
+const crypto = require('crypto');
 const app = express();
+
+// Password hashing functions using Node.js built-in crypto
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, hashedPassword) {
+  const [salt, hash] = hashedPassword.split(':');
+  const verifyHash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
+  return hash === verifyHash;
+}
 
 // Set up multer for file uploads
 const storage = multer.diskStorage({
@@ -80,25 +94,53 @@ app.post('/login', (req, res) => {
     return res.redirect('/login');
   }
 
-  const sql = 'SELECT * FROM account WHERE email = ? AND password = ?';
-  connection.query(sql, [email, password], (err, results) => {
+  const sql = 'SELECT * FROM account WHERE email = ?';
+  connection.query(sql, [email], (err, results) => {
     if (err) {
       console.error('Login error:', err);
       return res.status(500).send('Server error during login');
     }
 
     if (results.length > 0) {
-      req.session.user = results[0];
-
-      // Redirect based on roleid
-      if (results[0].roleid === 1) {
-        return res.redirect('/admin');
-      } else if (results[0].roleid === 2) {
-        return res.redirect('/lecturer');
-      } else if (results[0].roleid === 3) {
-        return res.redirect('/student');
+      const user = results[0];
+      
+      // Check if password is hashed (contains ':') or plain text
+      let passwordMatch = false;
+      if (user.password.includes(':')) {
+        // Password is hashed, verify it
+        passwordMatch = verifyPassword(password, user.password);
       } else {
-        return res.redirect('/');
+        // Password is plain text (for backward compatibility)
+        passwordMatch = (password === user.password);
+        
+        // If login successful with plain text, hash the password for security
+        if (passwordMatch) {
+          const hashedPassword = hashPassword(password);
+          const updateSql = 'UPDATE account SET password = ? WHERE accountid = ?';
+          connection.query(updateSql, [hashedPassword, user.accountid], (updateErr) => {
+            if (updateErr) {
+              console.error('Error updating password hash:', updateErr);
+            }
+          });
+        }
+      }
+
+      if (passwordMatch) {
+        req.session.user = user;
+
+        // Redirect based on roleid
+        if (user.roleid === 1) {
+          return res.redirect('/admin');
+        } else if (user.roleid === 2) {
+          return res.redirect('/lecturer');
+        } else if (user.roleid === 3) {
+          return res.redirect('/student');
+        } else {
+          return res.redirect('/');
+        }
+      } else {
+        req.flash('error', 'Invalid email or password.');
+        res.redirect('/login');
       }
     } else {
       req.flash('error', 'Invalid email or password.');
@@ -240,7 +282,9 @@ app.get('/ISLP/:projectid', checkAuthenticated, (req, res) => {
   `;
 
   const postSql = `
-    SELECT sub.*, acc.username, acc.roleid as author_roleid
+    SELECT sub.*, acc.username, acc.roleid as author_roleid,
+           (SELECT COUNT(*) FROM post_likes pl WHERE pl.submissionsid = sub.submissionsid) as like_count,
+           (SELECT COUNT(*) FROM post_likes pl WHERE pl.submissionsid = sub.submissionsid AND pl.accountid = ?) as user_liked
     FROM submissions sub 
     JOIN account acc ON sub.accountid = acc.accountid 
     WHERE sub.projectid = ? 
@@ -258,7 +302,7 @@ app.get('/ISLP/:projectid', checkAuthenticated, (req, res) => {
   connection.query(projectSql, [projectid], (err, projectResults) => {
     if (err || projectResults.length === 0) return res.status(500).send('Project not found');
 
-    connection.query(postSql, [projectid], (err, postResults) => {
+    connection.query(postSql, [req.session.user.accountid, projectid], (err, postResults) => {
       if (err) return res.status(500).send('Error loading posts');
       
       connection.query(membersSql, [projectid], (err, memberResults) => {
@@ -646,7 +690,7 @@ app.post('/updateProfile', checkAuthenticated, (req, res) => {
   }
   if (password && password.trim() !== '') {
     updateFields.push('password = ?');
-    values.push(password);
+    values.push(hashPassword(password)); // Hash the new password
   }
 
   if (updateFields.length === 0) {
@@ -896,6 +940,72 @@ app.get('/deletePost/:submissionsid', checkAuthenticated, checkRole(1, 2, 3), (r
   });
 });
 
+// API routes for handling post likes
+app.post('/api/like/:submissionsid', checkAuthenticated, (req, res) => {
+  const { submissionsid } = req.params;
+  const accountid = req.session.user.accountid;
+
+  // Check if user already liked this post
+  const checkLikeSql = 'SELECT * FROM post_likes WHERE submissionsid = ? AND accountid = ?';
+  
+  connection.query(checkLikeSql, [submissionsid, accountid], (checkErr, checkResults) => {
+    if (checkErr) {
+      console.error('Error checking like status:', checkErr);
+      return res.status(500).json({ error: 'Database error' });
+    }
+
+    if (checkResults.length > 0) {
+      // User already liked this post, so unlike it
+      const deleteLikeSql = 'DELETE FROM post_likes WHERE submissionsid = ? AND accountid = ?';
+      
+      connection.query(deleteLikeSql, [submissionsid, accountid], (deleteErr) => {
+        if (deleteErr) {
+          console.error('Error removing like:', deleteErr);
+          return res.status(500).json({ error: 'Failed to remove like' });
+        }
+
+        // Get updated like count
+        const countSql = 'SELECT COUNT(*) as like_count FROM post_likes WHERE submissionsid = ?';
+        connection.query(countSql, [submissionsid], (countErr, countResults) => {
+          if (countErr) {
+            console.error('Error getting like count:', countErr);
+            return res.status(500).json({ error: 'Failed to get like count' });
+          }
+
+          res.json({
+            liked: false,
+            like_count: countResults[0].like_count
+          });
+        });
+      });
+    } else {
+      // User hasn't liked this post, so add a like
+      const insertLikeSql = 'INSERT INTO post_likes (submissionsid, accountid) VALUES (?, ?)';
+      
+      connection.query(insertLikeSql, [submissionsid, accountid], (insertErr) => {
+        if (insertErr) {
+          console.error('Error adding like:', insertErr);
+          return res.status(500).json({ error: 'Failed to add like' });
+        }
+
+        // Get updated like count
+        const countSql = 'SELECT COUNT(*) as like_count FROM post_likes WHERE submissionsid = ?';
+        connection.query(countSql, [submissionsid], (countErr, countResults) => {
+          if (countErr) {
+            console.error('Error getting like count:', countErr);
+            return res.status(500).json({ error: 'Failed to get like count' });
+          }
+
+          res.json({
+            liked: true,
+            like_count: countResults[0].like_count
+          });
+        });
+      });
+    }
+  });
+});
+
 // Signup routes for students to join projects
 app.get('/signup/:projectid', checkAuthenticated, checkRole(3), (req, res) => {
   const { projectid } = req.params;
@@ -1066,9 +1176,12 @@ app.post('/addAccount', checkAuthenticated, checkRole(1), (req, res) => {
       return res.redirect('/addAccount');
     }
 
+    // Hash the password before storing
+    const hashedPassword = hashPassword(password);
+
     // Insert new account
     const insertSql = 'INSERT INTO account (username, email, password, phone, roleid, profile_description) VALUES (?, ?, ?, ?, ?, ?)';
-    connection.query(insertSql, [username, email, password, phone || null, roleid, profile_description || null], (insertErr, insertResult) => {
+    connection.query(insertSql, [username, email, hashedPassword, phone || null, roleid, profile_description || null], (insertErr, insertResult) => {
       if (insertErr) {
         console.error('Error adding account:', insertErr);
         req.flash('error', 'Failed to create account');
@@ -1142,7 +1255,7 @@ app.post('/editAccount/:accountid', checkAuthenticated, checkRole(1), (req, res)
 
     if (password && password.trim() !== '') {
       updateFields.push('password = ?');
-      values.push(password);
+      values.push(hashPassword(password)); // Hash the new password
     }
 
     if (phone !== undefined) {
@@ -1324,6 +1437,43 @@ app.post('/memberRequest/:id/:action', checkAuthenticated, checkRole(1, 2), (req
       const message = action === 'approve' ? 'Student approved successfully!' : 'Request rejected successfully.';
       req.flash('success', message);
       res.redirect('/memberRequests');
+    });
+  });
+});
+
+// Route to hash all existing passwords (run this once to convert existing passwords)
+app.get('/hashAllPasswords', checkAuthenticated, checkRole(1), (req, res) => {
+  // Get all accounts with plain text passwords (passwords without ':')
+  const sql = "SELECT accountid, password FROM account WHERE password NOT LIKE '%:%'";
+  
+  connection.query(sql, (err, results) => {
+    if (err) {
+      console.error('Error fetching accounts:', err);
+      return res.status(500).send('Error fetching accounts');
+    }
+    
+    if (results.length === 0) {
+      return res.send('All passwords are already hashed!');
+    }
+    
+    let processedCount = 0;
+    const totalCount = results.length;
+    
+    results.forEach((account) => {
+      const hashedPassword = hashPassword(account.password);
+      const updateSql = 'UPDATE account SET password = ? WHERE accountid = ?';
+      
+      connection.query(updateSql, [hashedPassword, account.accountid], (updateErr) => {
+        if (updateErr) {
+          console.error(`Error updating password for account ${account.accountid}:`, updateErr);
+        }
+        
+        processedCount++;
+        
+        if (processedCount === totalCount) {
+          res.send(`Successfully hashed ${totalCount} passwords!`);
+        }
+      });
     });
   });
 });
