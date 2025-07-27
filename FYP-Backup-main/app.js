@@ -634,28 +634,89 @@ function updateProjectMembers(projectId, membersList, res, user) {
 }
 
 app.get('/deleteISLP/:projectid', checkAuthenticated, checkRole(1, 2), (req, res) => {
-  const projectid = req.params.projectid;
+  const { projectid } = req.params;
+
+  // Check if user has permission to delete this project
+  const checkPermissionSql = 'SELECT * FROM project WHERE projectid = ? AND (? = 1 OR project_head = ?)';
   
-  // First check if the project exists and if the user has permission to delete it
-  const checkOwnershipSql = 'SELECT project_head FROM project WHERE projectid = ?';
-  connection.query(checkOwnershipSql, [projectid], (checkError, checkResults) => {
-    if (checkError) return res.status(500).send('Error checking project ownership');
-    if (checkResults.length === 0) return res.status(404).send('Project not found');
-    
-    // Check if the current user can delete this project
-    const project = checkResults[0];
-    const canDelete = req.session.user.roleid === 1 || // Admin can delete all
-                      parseInt(project.project_head) === req.session.user.accountid; // Project head can delete
-    
-    if (!canDelete) {
-      return res.status(403).send('Access denied. You can only delete projects you created.');
+  connection.query(checkPermissionSql, [projectid, req.session.user.roleid, req.session.user.accountid], (permErr, permResults) => {
+    if (permErr || permResults.length === 0) {
+      req.flash('error', 'You do not have permission to delete this project or project not found');
+      return res.redirect('/admin');
     }
-    
-    const sql = 'DELETE FROM project WHERE projectid = ?';
-    connection.query(sql, [projectid], (error, results) => {
-      if (error) return res.status(500).send('Error deleting project');
-      const redirectPath = req.session.user.roleid === 1 ? '/admin' : '/lecturer';
-      res.redirect(redirectPath);
+
+    // Start transaction to ensure data consistency
+    connection.beginTransaction((transErr) => {
+      if (transErr) {
+        console.error('Transaction error:', transErr);
+        req.flash('error', 'Error starting deletion process');
+        return res.redirect('/admin');
+      }
+
+      // Step 1: Delete project members
+      const deleteMembersSql = 'DELETE FROM project_members WHERE projectid = ?';
+      
+      connection.query(deleteMembersSql, [projectid], (memberErr) => {
+        if (memberErr) {
+          return connection.rollback(() => {
+            console.error('Error deleting project members:', memberErr);
+            req.flash('error', 'Error deleting project members');
+            res.redirect('/admin');
+          });
+        }
+
+        // Step 2: Delete submissions (if table exists)
+        const deleteSubmissionsSql = 'DELETE FROM submissions WHERE projectid = ?';
+        
+        connection.query(deleteSubmissionsSql, [projectid], (subErr) => {
+          // Don't fail if submissions table doesn't exist
+          if (subErr && !subErr.message.includes("doesn't exist")) {
+            return connection.rollback(() => {
+              console.error('Error deleting submissions:', subErr);
+              req.flash('error', 'Error deleting project submissions');
+              res.redirect('/admin');
+            });
+          }
+
+          // Step 3: Delete any other related records (add more if needed)
+          // Example: DELETE FROM project_files WHERE projectid = ?
+// Example: DELETE FROM project_comments WHERE projectid = ?
+
+
+          // Step 4: Finally delete the project
+          const deleteProjectSql = 'DELETE FROM project WHERE projectid = ?';
+          
+          connection.query(deleteProjectSql, [projectid], (projErr) => {
+            if (projErr) {
+              return connection.rollback(() => {
+                console.error('Error deleting project:', projErr);
+                req.flash('error', 'Error deleting project');
+                res.redirect('/admin');
+              });
+            }
+
+            // Commit the transaction
+            connection.commit((commitErr) => {
+              if (commitErr) {
+                return connection.rollback(() => {
+                  console.error('Commit error:', commitErr);
+                  req.flash('error', 'Error completing deletion');
+                  res.redirect('/admin');
+                });
+              }
+
+              req.flash('success', 'Project deleted successfully!');
+              
+              // Redirect based on user role
+              if (req.session.user.roleid === 1) {
+                res.redirect('/admin');
+              } else {
+                res.redirect('/lecturer');
+              }
+            });
+          });
+        });
+      });
     });
   });
 });
