@@ -79,6 +79,11 @@ const checkRole = (...allowedRoles) => {
 };
 
 // Routes
+
+app.get('/', (req, res) => {
+  res.redirect('/login');
+});
+
 app.get('/login', (req, res) => {
   res.render('login', {
     errors: req.flash('error'),
@@ -1538,10 +1543,6 @@ app.get('/hashAllPasswords', checkAuthenticated, checkRole(1), (req, res) => {
       });
     });
   });
-});
-
-app.get('/', (req, res) => {
-  res.redirect('/login');
 });
 
 const PORT = process.env.PORT || 3000;
